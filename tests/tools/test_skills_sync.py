@@ -463,6 +463,52 @@ class TestSyncSkills:
         assert len(manifest["new-skill"]) == 32
         assert len(manifest["old-skill"]) == 32
 
+    @pytest.mark.parametrize("local_body", ["# Local\n", "# Bundled\n"])
+    def test_new_bundled_skill_defers_to_same_name_at_another_path(
+        self, tmp_path, local_body
+    ):
+        """A local skill keeps global ownership of its frontmatter name.
+
+        The loader resolves skills by frontmatter name, not category path. A
+        newly bundled skill must therefore not be copied to its canonical path
+        when an untracked local skill with the same name already exists under
+        another category; doing so creates an ambiguous active tree.
+        """
+        bundled = tmp_path / "bundled_skills"
+        bundled_skill = bundled / "upstream-category" / "shared-skill"
+        bundled_skill.mkdir(parents=True)
+        (bundled_skill / "SKILL.md").write_text(
+            "---\nname: shared-skill\n---\n# Bundled\n"
+        )
+
+        skills_dir = tmp_path / "user_skills"
+        local_skill = skills_dir / "local-category" / "shared-skill"
+        local_skill.mkdir(parents=True)
+        (local_skill / "SKILL.md").write_text(
+            f"---\nname: shared-skill\n---\n{local_body}"
+        )
+        manifest_file = skills_dir / ".bundled_manifest"
+
+        with self._patches(bundled, skills_dir, manifest_file):
+            result = sync_skills(quiet=True)
+            manifest = _read_manifest()
+
+        assert local_skill.exists()
+        assert (local_skill / "SKILL.md").read_text().endswith(local_body)
+        assert not (skills_dir / "upstream-category" / "shared-skill").exists()
+        assert "shared-skill" in result["shadowed_by_local"]
+        assert "shared-skill" not in manifest
+
+        # The deferral is not a permanent opt-out. Once the conflicting local
+        # owner is removed, the next normal sync can seed and track upstream.
+        shutil.rmtree(local_skill)
+        with self._patches(bundled, skills_dir, manifest_file):
+            retried = sync_skills(quiet=True)
+            retried_manifest = _read_manifest()
+
+        assert "shared-skill" in retried["copied"]
+        assert "shared-skill" in retried_manifest
+
     def test_user_deleted_skill_not_re_added_and_stale_entries_cleaned(self, tmp_path):
         """In manifest but not on disk = user deleted it; don't re-add. And a
         manifest entry no longer present in bundled gets cleaned out."""

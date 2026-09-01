@@ -2502,7 +2502,17 @@ def _update_via_zip(args, *, had_desktop_app_before_update: bool = False) -> boo
                 f"  → {len(result['relocated'])} moved to new upstream paths: "
                 f"{', '.join(result['relocated'])}"
             )
-        if not result["copied"] and not result.get("updated"):
+        if result.get("shadowed_by_local"):
+            print(
+                f"  ⇢ {len(result['shadowed_by_local'])} bundled skipped; "
+                "same-name local skills kept: "
+                f"{', '.join(result['shadowed_by_local'])}"
+            )
+        if (
+            not result["copied"]
+            and not result.get("updated")
+            and not result.get("shadowed_by_local")
+        ):
             print("  ✓ Skills are up to date")
     except Exception:
         pass
@@ -9615,7 +9625,17 @@ def _cmd_update_impl(args, gateway_mode: bool):
                     f"  → {len(result['relocated'])} moved to new upstream paths: "
                     f"{', '.join(result['relocated'])}"
                 )
-            if not result["copied"] and not result.get("updated"):
+            if result.get("shadowed_by_local"):
+                print(
+                    f"  ⇢ {len(result['shadowed_by_local'])} bundled skipped; "
+                    "same-name local skills kept: "
+                    f"{', '.join(result['shadowed_by_local'])}"
+                )
+            if (
+                not result["copied"]
+                and not result.get("updated")
+                and not result.get("shadowed_by_local")
+            ):
                 print("  ✓ Skills are up to date")
         except Exception as e:
             logger.debug("Skills sync during update failed: %s", e)

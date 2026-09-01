@@ -714,7 +714,8 @@ def sync_skills(quiet: bool = False) -> dict:
 
     Returns:
         dict with keys: copied (list), updated (list), skipped (int),
-                        user_modified (list), cleaned (list), total_bundled (int)
+                        user_modified (list), cleaned (list),
+                        shadowed_by_local (list), total_bundled (int)
     """
     # Opt-out: a profile (named or the default ~/.hermes) that wrote the
     # .no-bundled-skills marker gets zero bundled-skill seeding — EXCEPT the
@@ -738,6 +739,7 @@ def sync_skills(quiet: bool = False) -> dict:
             "copied": [], "updated": [], "skipped": 0,
             "user_modified": [], "cleaned": [], "suppressed": [], "total_bundled": 0,
             "optional_provenance_backfilled": [],
+            "shadowed_by_local": [],
         }
 
     _skills_dir().mkdir(parents=True, exist_ok=True)
@@ -754,8 +756,10 @@ def sync_skills(quiet: bool = False) -> dict:
     # Index of skills already provided by external_dirs (skip writing them)
     external_index = _build_external_skill_index()
     shadowed_by_external: List[str] = []
-    # Rename recovery indexes are expensive on host bind mounts. Build them
-    # only if a tracked skill is actually missing from its canonical path.
+    shadowed_by_local: List[str] = []
+    # Active-tree indexes are expensive on host bind mounts. Build them only
+    # when a tracked skill or a newly bundled skill is missing from its
+    # canonical path.
     active_index: Optional[Dict[str, List[Path]]] = None
     hub_paths: Optional[Set[str]] = None
 
@@ -846,6 +850,35 @@ def sync_skills(quiet: bool = False) -> dict:
         if skill_name not in manifest:
             # ── New skill — never offered before ──
             try:
+                if not dest.exists():
+                    # Skill identity is global by frontmatter name, while the
+                    # destination path includes its category. A local or
+                    # hub-installed skill can therefore already own this name
+                    # at a different path. Copying the bundled version would
+                    # create an ambiguous active tree that the loader cannot
+                    # resolve. Treat the existing skill as authoritative and
+                    # leave the manifest untouched: without prior provenance,
+                    # even byte-identical content is not proof that sync owns
+                    # the user's chosen path.
+                    if active_index is None:
+                        active_index = _index_active_skills()
+                    local_matches = sorted(
+                        path for path in active_index.get(skill_name, [])
+                        if path != dest and path.is_dir()
+                    )
+                    if local_matches:
+                        shadowed_by_local.append(skill_name)
+                        skipped += 1
+                        if not quiet:
+                            locations = ", ".join(
+                                path.relative_to(_skills_dir()).as_posix()
+                                for path in local_matches
+                            )
+                            print(
+                                f"  ⇢ {skill_name} (kept local skill at "
+                                f"{locations}; bundled version not written)"
+                            )
+                        continue
                 if dest.exists():
                     # User already has a skill with the same name — don't overwrite.
                     # Only baseline in the manifest when the on-disk copy is
@@ -871,6 +904,8 @@ def sync_skills(quiet: bool = False) -> dict:
                     shutil.copytree(skill_src, dest)
                     copied.append(skill_name)
                     manifest[skill_name] = bundled_hash
+                    if active_index is not None:
+                        active_index.setdefault(skill_name, []).append(dest)
                     if not quiet:
                         print(f"  + {skill_name}")
             except (OSError, IOError) as e:
@@ -1004,6 +1039,7 @@ def sync_skills(quiet: bool = False) -> dict:
         "total_bundled": len(bundled_skills),
         "optional_provenance_backfilled": optional_provenance_backfilled,
         "shadowed_by_external": shadowed_by_external,
+        "shadowed_by_local": shadowed_by_local,
         # Opted-out profiles still seed essential skills; the flag lets
         # callers report "opted out" rather than a normal full sync.
         "skipped_opt_out": essential_only,
