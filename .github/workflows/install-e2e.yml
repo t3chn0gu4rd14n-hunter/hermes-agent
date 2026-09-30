@@ -185,6 +185,29 @@ jobs:
             scripts/sandbox/pick-release-tags.sh
             scripts/releases/pick_tags.py
           sparse-checkout-cone-mode: false
+
+      # A fork carries none of the upstream release tags, so pick-release-tags.sh
+      # aborted with "no release tags found" and every downstream job then got
+      # an empty --tags, which crashed the generator with
+      # "SyntaxError: Unexpected end of JSON input". Fetch the tags this repo
+      # actually tracks from its parent, so the E2E keeps covering real releases.
+      - name: Fetch upstream release tags
+        if: github.event.repository.parent.full_name != ''
+        env:
+          UPSTREAM: ${{ github.event.repository.parent.full_name }}
+        run: |
+          set -euo pipefail
+          git fetch --force --tags "https://github.com/${UPSTREAM}.git"
+          echo "release tags now present: $(git tag --list 'v[0-9]*' | wc -l)"
+
+      - name: Fail clearly if no release tags are reachable
+        if: github.event.repository.parent.full_name == ''
+        run: |
+          set -euo pipefail
+          if [ "$(git tag --list 'v[0-9]*' | wc -l)" -eq 0 ]; then
+            echo "::error::no release tags and this is not a fork; nothing to test updating from"
+            exit 1
+          fi
       - id: pick
         env:
           # Inputs never touch shell syntax directly: TAG_COUNT arrives via
