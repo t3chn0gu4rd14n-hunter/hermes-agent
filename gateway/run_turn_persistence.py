@@ -423,9 +423,9 @@ class GatewayTurnPersistenceMixin:
         }
         if prepared.persist_user_display_kind:
             _user_entry["display_kind"] = prepared.persist_user_display_kind
-        from gateway.response_filters import display_metadata_for_event
+        from gateway.response_filters import persisted_user_metadata_for_event
         display_metadata = {**({"gateway_input_owner": prepared.persistence_owner} if prepared.persistence_owner else {}),
-                            **display_metadata_for_event(event)}
+                            **persisted_user_metadata_for_event(event)}
         if display_metadata:
             _user_entry["display_metadata"] = display_metadata
         if getattr(event, "message_id", None):
@@ -662,9 +662,12 @@ class GatewayTurnPersistenceMixin:
             # The session's own route key is gone or changed: /retry repeats it, /new is the way out.
             from agent.turn_failure_copy import launch_credentials_copy
             return record_unexecuted_failure(launch_credentials_copy(e), 'launch_credentials_unavailable')
+        # A local client (CLI, TUI, Desktop) is the operator at this host: its result carries the
+        # real cause, so its details line is not the chat apology with the log pointer cut off.
+        local_error = f"{type(e).__name__}: {e}"[:500] if source.platform == Platform.LOCAL else None
         return record_unexecuted_failure(self._hmwa_add_failed_turn_notice(
             t("gateway.errors.generic_failed_with_hint", hint=status_hint), PARTIAL_FAILED_TURN_NOTICE,
-        ))
+        ), error=local_error)
 
     def _hmwa_discard_stale_result(self, source, _quick_key, run_generation):
         """A newer run generation superseded this turn: drop its deferred post-delivery callback."""
